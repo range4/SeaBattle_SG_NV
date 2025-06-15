@@ -15,6 +15,7 @@ public:
 private:
     sf::RenderWindow window;
     sf::Font font;
+    sf::View view;  // Добавляем вид для масштабирования
     GameState gameState;
     int currentPlayer;
     bool playerTurn;
@@ -22,13 +23,16 @@ private:
     bool placingPhasePlayerDone;
     std::shared_ptr<Ship> currentShip;
     std::vector<std::shared_ptr<Ship>> shipsToPlace;
-    std::shared_ptr<Ship> selectedShip;  // Для новой системы выбора кораблей
-    std::string winnerMessage;
-    std::string gameOverTitle;
+    std::shared_ptr<Ship> selectedShip;
 
     Board playerBoard;
     Board enemyBoard;
     Board player2Board;
+
+    sf::Clock gameTimer;      // Таймер игры
+    sf::Time gameDuration;    // Продолжительность игры
+    bool gameStarted;
+    sf::Text timerText;
 
     std::unique_ptr<AI> ai;
 
@@ -36,6 +40,8 @@ private:
     sf::RectangleShape placeButtons[3];
     sf::RectangleShape gameOverButton;
 
+    std::string winnerMessage;
+    std::string gameOverTitle;
 
     void handleEvents();
     void update();

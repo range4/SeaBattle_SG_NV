@@ -4,16 +4,19 @@
 #include <ctime>
 #include <algorithm>
 #include <sstream>
+#include <iomanip>
 
 Game::Game()
-    : window(sf::VideoMode(1000, 600), "Sea Battle", sf::Style::Close),
+    : window(sf::VideoMode(1000, 600), "Sea Battle", sf::Style::Close | sf::Style::Resize),
+    view(window.getDefaultView()),
     gameState(GameState::MENU),
     currentPlayer(0),
     playerTurn(true),
     isVsComputer(false),
     placingPhasePlayerDone(false),
     currentShip(nullptr),
-    selectedShip(nullptr),  // Инициализация новой переменной
+    selectedShip(nullptr),
+    gameStarted(false),
     gameOverTitle("GAME OVER")
 {
     // Загрузка шрифта
@@ -26,6 +29,11 @@ Game::Game()
             }
         }
     }
+
+    timerText.setFont(font);
+    timerText.setCharacterSize(24);
+    timerText.setFillColor(sf::Color::Black);
+    timerText.setPosition(800, 10);
 
     // Инициализация кнопок меню
     menuButtons[0] = createButton(350, 200, 300, 50, "Play vs Friend");
@@ -79,6 +87,8 @@ void Game::resetGame() {
     currentShip = nullptr;
     selectedShip = nullptr;
     playerTurn = true;
+    gameStarted = false;
+    timerText.setString("");
 
     // Создаем корабли для размещения
     const int shipSizes[] = { 4, 3, 3, 2, 2, 2, 1, 1, 1, 1 };
@@ -106,6 +116,12 @@ void Game::handleEvents() {
         if (event.type == sf::Event::Closed) {
             window.close();
         }
+        // Обработка изменения размера окна
+        else if (event.type == sf::Event::Resized) {
+            sf::FloatRect visibleArea(0, 0, event.size.width, event.size.height);
+            view = sf::View(visibleArea);
+            window.setView(view);
+        }
 
         if (event.type == sf::Event::MouseButtonPressed) {
             sf::Vector2i mousePos = sf::Mouse::getPosition(window);
@@ -120,22 +136,58 @@ void Game::handleEvents() {
                 break;
             case GameState::PLAYING_VS_HUMAN:
             case GameState::PLAYING_VS_AI:
+                if (!gameStarted) {
+                    gameTimer.restart();
+                    gameStarted = true;
+                    timerText.setString("Time: 00:00"); // Инициализируем текст
+                }
                 handlePlayingInput(mousePos);
                 break;
             case GameState::GAME_OVER:
                 if (isMouseOver(gameOverButton, mousePos)) {
                     gameState = GameState::MENU;
+                    // Сбрасываем флаг таймера при возврате в меню
+                    gameStarted = false;
                 }
                 break;
             }
         }
+
+        // Обработка клавиатуры для отладки (опционально)
+        if (event.type == sf::Event::KeyPressed) {
+            if (event.key.code == sf::Keyboard::R) {
+                // Перезапуск игры по нажатию R
+                resetGame();
+                gameState = GameState::MENU;
+            }
+        }
+    }
+
+    // Фиксируем время окончания игры при завершении
+    if (gameStarted && gameState == GameState::GAME_OVER) {
+        gameDuration = gameTimer.getElapsedTime();
     }
 }
 
 void Game::update() {
+    if (gameStarted && gameState != GameState::GAME_OVER) {
+        gameDuration = gameTimer.getElapsedTime();
+        // Форматируем время для отображения
+        int totalSeconds = static_cast<int>(gameDuration.asSeconds());
+        int minutes = totalSeconds / 60;
+        int seconds = totalSeconds % 60;
+
+        std::stringstream timeString;
+        timeString << "Time: "
+            << std::setfill('0') << std::setw(2) << minutes << ":"
+            << std::setfill('0') << std::setw(2) << seconds;
+
+        timerText.setString(timeString.str());
+    }
     // Ход ИИ в режиме против компьютера
     if (gameState == GameState::PLAYING_VS_AI && !playerTurn) {
         sf::sleep(sf::milliseconds(500)); // Задержка для видимости хода ИИ
+
 
         sf::Vector2i aiMove = ai->makeMove();
         Board::CellState result = playerBoard.takeShot(aiMove.x, aiMove.y);
@@ -145,6 +197,7 @@ void Game::update() {
                 gameOverTitle = "GAME OVER";
                 winnerMessage = "Computer Wins!";
                 gameState = GameState::GAME_OVER;
+                gameDuration = gameTimer.getElapsedTime();
             }
         }
         else {
@@ -155,6 +208,7 @@ void Game::update() {
 
 void Game::render() {
     window.clear(sf::Color(230, 230, 230)); // Светло-серый фон
+    window.setView(view); // Устанавливаем вид для масштабирования
 
     switch (gameState) {
     case GameState::MENU:
@@ -344,11 +398,13 @@ void Game::handlePlayingInput(sf::Vector2i mousePos) {
             if (result == Board::CellState::SHIP_HIT) {
                 if (targetBoard->allShipsSunk()) {
                     // Определяем победителя
+                    gameDuration = gameTimer.getElapsedTime();
                     if (gameState == GameState::PLAYING_VS_AI) {
                         gameOverTitle = "CONGRATULATIONS!";
                         winnerMessage = "You win!";
                     }
                     else {
+                        gameOverTitle = "GAME OVER";
                         winnerMessage = (currentPlayer == 0) ? "Player 1 Wins!" : "Player 2 Wins!";
                     }
                     gameState = GameState::GAME_OVER;
@@ -469,18 +525,33 @@ void Game::renderPlacing() {
             window.draw(shipPreview);
         }
     }
+
+    // Отображаем таймер, если игра началась (для второго игрока)
+    if (gameStarted) {
+        // Рисуем фон для таймера
+        sf::RectangleShape timerBackground(sf::Vector2f(120, 30));
+        timerBackground.setFillColor(sf::Color(240, 240, 240, 200)); // Полупрозрачный светлый фон
+        timerBackground.setPosition(795, 5);
+        window.draw(timerBackground);
+
+        // Отображаем таймер
+        window.draw(timerText);
+    }
 }
 
 void Game::renderPlaying() {
     std::string playerTextStr, enemyTextStr;
     Board* ownBoard = nullptr;
     Board* enemyBoardPtr = nullptr;
+    bool showOwnShips = false;  // По умолчанию скрываем корабли
+    bool showEnemyShips = false; // По умолчанию скрываем корабли противника
 
     if (gameState == GameState::PLAYING_VS_AI) {
         playerTextStr = "Your Board";
         enemyTextStr = "Computer Board";
         ownBoard = &playerBoard;
         enemyBoardPtr = &enemyBoard;
+        showOwnShips = true;  // В режиме против компьютера показываем свои корабли
     }
     else {
         if (currentPlayer == 0) {
@@ -495,23 +566,24 @@ void Game::renderPlaying() {
             ownBoard = &player2Board;
             enemyBoardPtr = &playerBoard;
         }
+        // В режиме PvP не показываем корабли ни на одном поле
+        showOwnShips = false;
+        showEnemyShips = false;
     }
 
     // Рисуем поле игрока
     sf::Text playerText(playerTextStr, font, 30);
-    playerText.setPosition(50, 10);
     playerText.setFillColor(sf::Color::Blue);
-    playerText.setStyle(sf::Text::Bold);
+    playerText.setPosition(50, 10);
     window.draw(playerText);
-    drawGrid(50, 50, *ownBoard, true);
+    drawGrid(50, 50, *ownBoard, showOwnShips);
 
     // Рисуем поле противника
     sf::Text enemyText(enemyTextStr, font, 30);
-    enemyText.setPosition(550, 10);
     enemyText.setFillColor(sf::Color::Blue);
-    enemyText.setStyle(sf::Text::Bold);
+    enemyText.setPosition(550, 10);
     window.draw(enemyText);
-    drawGrid(550, 50, *enemyBoardPtr, false);
+    drawGrid(550, 50, *enemyBoardPtr, showEnemyShips);
 
     // Индикатор хода
     std::string turnTextStr;
@@ -525,23 +597,48 @@ void Game::renderPlaying() {
     sf::Text turnText(turnTextStr, font, 30);
     turnText.setPosition(500 - turnText.getLocalBounds().width / 2, 500);
     turnText.setFillColor(playerTurn ? sf::Color::Green : sf::Color::Red);
-    turnText.setStyle(sf::Text::Bold);
     window.draw(turnText);
+
+    sf::RectangleShape timerBackground(sf::Vector2f(120, 30));
+    timerBackground.setFillColor(sf::Color(240, 240, 240, 200)); // Полупрозрачный светлый фон
+    timerBackground.setPosition(795, 5);
+    window.draw(timerBackground);
+
+    // Отображаем таймер
+    window.draw(timerText);
 }
 
 void Game::renderGameOver() {
-    sf::Text gameOverText(gameOverTitle, font, 60);  // Используем переменную gameOverTitle
+    // Заголовок
+    sf::Text gameOverText(gameOverTitle, font, 60);
     gameOverText.setFillColor(sf::Color::Red);
     gameOverText.setStyle(sf::Text::Bold);
     gameOverText.setPosition(500 - gameOverText.getLocalBounds().width / 2, 100);
     window.draw(gameOverText);
 
+    // Победитель
     sf::Text winner(winnerMessage, font, 40);
     winner.setFillColor(sf::Color::Blue);
     winner.setStyle(sf::Text::Bold);
     winner.setPosition(500 - winner.getLocalBounds().width / 2, 200);
     window.draw(winner);
 
+    // Время игры
+    int totalSeconds = static_cast<int>(gameDuration.asSeconds());
+    int minutes = totalSeconds / 60;
+    int seconds = totalSeconds % 60;
+
+    std::stringstream timeString;
+    timeString << "Game duration: "
+        << minutes << " minute" << (minutes != 1 ? "s" : "") << " and "
+        << seconds << " second" << (seconds != 1 ? "s" : "");
+
+    sf::Text timeText(timeString.str(), font, 30);
+    timeText.setFillColor(sf::Color::Black);
+    timeText.setPosition(500 - timeText.getLocalBounds().width / 2, 280);
+    window.draw(timeText);
+
+    // Кнопка возврата в меню
     drawButton(gameOverButton, "Back to Menu", 24);
 }
 
